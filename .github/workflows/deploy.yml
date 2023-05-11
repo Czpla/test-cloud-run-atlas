@@ -1,0 +1,61 @@
+name: Deploy into cloud run
+
+on:
+  pull_request:
+    branches: 
+      - production
+      - development
+      - homologation
+    
+    types:
+      - closed
+
+env:
+  IMAGE_NAME: gcr.io/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.PROJECT_NAME }}-${{ github.base_ref }}:latest
+  FINISH_PROJECT_NAME: ${{ secrets.PROJECT_NAME }}-${{ github.base_ref }}
+
+jobs:
+  deploy:
+    if: github.event.pull_request.merged == true
+    name: Setup, build and deploy
+    runs-on: ubuntu-latest
+    environment: ${{ github.base_ref }}
+    
+    steps:
+      # Git checkout
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      # Authentication gcp
+      - name: Authentication gcp
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      # Set up cloud SDK
+      - name: Set up cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        
+      # Configure gcloud docker
+      - name: Configure docker
+        run: gcloud auth configure-docker --quiet
+
+      # Build image
+      - name: Build image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          tags: |
+            ${{ env.IMAGE_NAME }}
+          build-args: |
+            MONGODB_URI=${{ secrets.MONGODB_URI }}
+
+      # Push image to registry
+      - name: Push docker image
+        run: docker push $IMAGE_NAME
+
+      # Deploy image
+      - name: Deploy docker
+        run: gcloud run deploy $FINISH_PROJECT_NAME
+          --image $IMAGE_NAME --region=us-central1 --cpu 1 --memory 4Gi --min-instances 1 
+          --platform managed --port 80 --allow-unauthenticated
